@@ -605,7 +605,7 @@
     <ul class="nav-links">
       <li><a href="#how">How it works</a></li>
       <li><a href="#features">Features</a></li>
-      <li><a href="mailto:satish@quovi.ai">Contact</a></li>
+      <li><a href="mailto:hello@quovi.ai">Contact</a></li>
     </ul>
 
     <button class="nav-cta" onclick="scrollToWaitlist()">Get early access</button>
@@ -632,6 +632,8 @@
 
   <!-- Waitlist form (hero) -->
   <div class="waitlist-form" id="hero-form-wrap">
+    <!-- Honeypot — hidden from humans, filled by bots -->
+    <input type="text" name="website" id="hero-website" style="display:none;position:absolute;left:-9999px;" tabindex="-1" autocomplete="off"/>
     <input class="waitlist-input" id="hero-email" type="email" placeholder="you@company.com" autocomplete="email"/>
     <button class="waitlist-btn" onclick="submitWaitlist('hero')">Join the waitlist →</button>
   </div>
@@ -856,13 +858,15 @@
     <p class="cta-sub">We're onboarding a small number of early customers now. Join the waitlist and we'll reach out personally.</p>
 
     <div class="cta-form" id="cta-form-wrap">
+      <!-- Honeypot — hidden from humans, filled by bots -->
+      <input type="text" name="website" id="cta-website" style="display:none;position:absolute;left:-9999px;" tabindex="-1" autocomplete="off"/>
       <input class="waitlist-input" id="cta-email" type="email" placeholder="you@company.com" autocomplete="email"/>
       <button class="waitlist-btn" onclick="submitWaitlist('cta')">Join the waitlist →</button>
     </div>
     <div class="waitlist-success" id="cta-success">
       ✦ You're on the list — we'll be in touch soon.
     </div>
-    <p class="waitlist-note" style="margin-top:12px;">No spam. Unsubscribe any time. Or email us directly at <a href="mailto:satish@quovi.ai" style="color:var(--cyan);">satish@quovi.ai</a></p>
+    <p class="waitlist-note" style="margin-top:12px;">No spam. Unsubscribe any time.</p>
   </div>
 </section>
 
@@ -898,7 +902,7 @@
     <div class="footer-links">
       <a href="#how">How it works</a>
       <a href="#features">Features</a>
-      <a href="mailto:satish@quovi.ai">Contact</a>
+      <a href="mailto:hello@quovi.ai">Contact</a>
       <a href="#">Privacy</a>
     </div>
 
@@ -912,34 +916,72 @@
 ══════════════════════════════════════════ -->
 <script>
 // ── Waitlist form handling ─────────────────
-function submitWaitlist(context) {
-  const emailId  = context === 'hero' ? 'hero-email'  : 'cta-email';
-  const wrapId   = context === 'hero' ? 'hero-form-wrap' : 'cta-form-wrap';
-  const successId= context === 'hero' ? 'hero-success'   : 'cta-success';
+async function submitWaitlist(context) {
+  const emailId   = context === 'hero' ? 'hero-email'     : 'cta-email';
+  const honeypotId= context === 'hero' ? 'hero-website'   : 'cta-website';
+  const wrapId    = context === 'hero' ? 'hero-form-wrap'  : 'cta-form-wrap';
+  const successId = context === 'hero' ? 'hero-success'    : 'cta-success';
+  const btnEl     = document.querySelector(`#${wrapId} .waitlist-btn`);
 
   const emailEl   = document.getElementById(emailId);
   const wrapEl    = document.getElementById(wrapId);
   const successEl = document.getElementById(successId);
 
-  const email = emailEl ? emailEl.value.trim() : '';
+  const email    = emailEl   ? emailEl.value.trim()   : '';
+  const honeypot = document.getElementById(honeypotId) ? document.getElementById(honeypotId).value : '';
 
-  // Validate
-  if (!email || !email.includes('@') || !email.includes('.')) {
+  // Client-side email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  if (!email || !emailRegex.test(email)) {
     if (emailEl) {
-      emailEl.style.borderColor = 'rgba(248,113,113,.5)';
+      emailEl.style.borderColor = 'rgba(248,113,113,.6)';
       emailEl.focus();
-      setTimeout(() => { emailEl.style.borderColor = ''; }, 2000);
+      setTimeout(() => { emailEl.style.borderColor = ''; }, 2500);
     }
     return;
   }
 
-  // Send to mailto (production: replace with Formspree / your API)
-  // For now, open mailto as fallback
-  window.location.href = `mailto:satish@quovi.ai?subject=Waitlist%20signup&body=Email%3A%20${encodeURIComponent(email)}`;
+  // Disable button + show loading state
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Joining…'; }
 
-  // Show success state
-  if (wrapEl)    { wrapEl.style.display    = 'none'; }
-  if (successEl) { successEl.style.display = 'block'; }
+  try {
+    const res = await fetch('/api/waitlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, source: context + '_form', website: honeypot }),
+    });
+
+    if (res.ok) {
+      // Success (200)
+      if (wrapEl)    { wrapEl.style.display    = 'none'; }
+      if (successEl) { successEl.style.display = 'block'; }
+    } else if (res.status === 409) {
+      // Already registered
+      if (successEl) {
+        successEl.textContent = '✦ You\'re already on the list — keep an eye on your inbox.';
+        successEl.style.display = 'block';
+      }
+      if (wrapEl) { wrapEl.style.display = 'none'; }
+    } else if (res.status === 422) {
+      // Invalid email (server-side)
+      if (emailEl) {
+        emailEl.style.borderColor = 'rgba(248,113,113,.6)';
+        emailEl.focus();
+        setTimeout(() => { emailEl.style.borderColor = ''; }, 2500);
+      }
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Join the waitlist →'; }
+    } else {
+      throw new Error(`Unexpected status ${res.status}`);
+    }
+  } catch (err) {
+    console.error('Waitlist error:', err);
+    // Network / unexpected error — restore button with error hint
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.textContent = 'Try again →';
+      setTimeout(() => { btnEl.textContent = 'Join the waitlist →'; }, 4000);
+    }
+  }
 }
 
 // Allow Enter key to submit
